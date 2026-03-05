@@ -1225,7 +1225,8 @@ struct ContentView: View {
     @EnvironmentObject var sidebarState: SidebarState
     @EnvironmentObject var sidebarSelectionState: SidebarSelectionState
     @State private var sidebarWidth: CGFloat = 200
-    private let schedulerPanelWidth: CGFloat = 200
+    @State private var isSchedulerFormExpanded: Bool = false
+    private var schedulerPanelWidth: CGFloat { isSchedulerFormExpanded ? 400 : 200 }
     @State private var hoveredResizerHandles: Set<SidebarResizerHandle> = []
     @State private var isResizerDragging = false
     @State private var sidebarDragStartWidth: CGFloat?
@@ -1784,8 +1785,11 @@ struct ContentView: View {
     }
 
     private var schedulerPanelView: some View {
-        SchedulerPage(selection: $sidebarSelectionState.selection)
-            .frame(width: schedulerPanelWidth)
+        SchedulerPage(
+            selection: $sidebarSelectionState.selection,
+            isFormExpanded: $isSchedulerFormExpanded
+        )
+        .frame(width: schedulerPanelWidth)
     }
 
     /// Space at top of content area for the titlebar. This must be at least the actual titlebar
@@ -2072,9 +2076,29 @@ struct ContentView: View {
                     .frame(width: 0, height: 0)
                 )
                 .onChange(of: sidebarSelectionState.isSchedulerVisible) { _ in
+                    if !sidebarSelectionState.isSchedulerVisible {
+                        isSchedulerFormExpanded = false
+                    }
                     // WindowAccessor fires on window attach; onChange handles runtime toggles.
                     // The accessor's onWindow closure captures the latest state, so re-trigger it
                     // by forcing a layout pass.
+                    DispatchQueue.main.async {
+                        NSApp.windows.forEach { window in
+                            TerminalWindowPortalRegistry.setTrailingExclusionWidth(
+                                sidebarSelectionState.isSchedulerVisible ? schedulerPanelWidth : 0,
+                                window: window
+                            )
+                        }
+                    }
+                }
+                .onChange(of: isSchedulerFormExpanded) { expanded in
+                    // When the scheduler form is expanded, unfocus the terminal to prevent
+                    // ensureFocus retries from stealing first responder from SwiftUI text fields.
+                    if expanded, let tabManager = AppDelegate.shared?.tabManager,
+                       let workspace = tabManager.tabs.first(where: { $0.id == tabManager.selectedTabId }),
+                       let panel = workspace.focusedTerminalPanel {
+                        panel.unfocus()
+                    }
                     DispatchQueue.main.async {
                         NSApp.windows.forEach { window in
                             TerminalWindowPortalRegistry.setTrailingExclusionWidth(
