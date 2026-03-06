@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="cmux DEV"
+APP_NAME="crux DEV"
 BUNDLE_ID="com.cmuxterm.app.debug"
-BASE_APP_NAME="cmux DEV"
+BASE_APP_NAME="crux DEV"
 DERIVED_DATA=""
 NAME_SET=0
 BUNDLE_SET=0
@@ -81,14 +81,14 @@ print_tag_cleanup_reminder() {
     done
     echo "Cleanup stale tags only:"
     for tag in "${stale_tags[@]}"; do
-      echo "  pkill -f \"cmux DEV ${tag}.app/Contents/MacOS/cmux DEV\""
+      echo "  pkill -f \"crux DEV ${tag}.app/Contents/MacOS/crux DEV\""
       echo "  rm -rf \"/tmp/cmux-${tag}\" \"/tmp/cmux-debug-${tag}.sock\""
       echo "  rm -f \"/tmp/cmux-debug-${tag}.log\""
       echo "  rm -f \"$HOME/Library/Application Support/cmux/cmuxd-dev-${tag}.sock\""
     done
   fi
   echo "After you verify current tag, cleanup command:"
-  echo "  pkill -f \"cmux DEV ${current_slug}.app/Contents/MacOS/cmux DEV\""
+  echo "  pkill -f \"crux DEV ${current_slug}.app/Contents/MacOS/crux DEV\""
   echo "  rm -rf \"/tmp/cmux-${current_slug}\" \"/tmp/cmux-debug-${current_slug}.sock\""
   echo "  rm -f \"/tmp/cmux-debug-${current_slug}.log\""
   echo "  rm -f \"$HOME/Library/Application Support/cmux/cmuxd-dev-${current_slug}.sock\""
@@ -153,7 +153,7 @@ if [[ -n "$TAG" ]]; then
   TAG_ID="$(sanitize_bundle "$TAG")"
   TAG_SLUG="$(sanitize_path "$TAG")"
   if [[ "$NAME_SET" -eq 0 ]]; then
-    APP_NAME="cmux DEV ${TAG}"
+    APP_NAME="crux DEV ${TAG}"
   fi
   if [[ "$BUNDLE_SET" -eq 0 ]]; then
     BUNDLE_ID="com.cmuxterm.app.debug.${TAG_ID}"
