@@ -31,6 +31,7 @@
 		A500180A /* SchedulerPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A500180B /* SchedulerPage.swift */; };
 		A500180C /* ClaudeTokenTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A500180D /* ClaudeTokenTracker.swift */; };
 		A500180E /* SchedulerTaskForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = A500180F /* SchedulerTaskForm.swift */; };
+		A5CC0002 /* ClaudeCommandBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CC0001 /* ClaudeCommandBuilder.swift */; };
 		A5001601 /* SentryHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001600 /* SentryHelper.swift */; };
 		A5001400 /* Panel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001410 /* Panel.swift */; };
 		A5001401 /* TerminalPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5001411 /* TerminalPanel.swift */; };
@@ -187,6 +188,7 @@
 		A500180B /* SchedulerPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scheduler/SchedulerPage.swift; sourceTree = "<group>"; };
 		A500180D /* ClaudeTokenTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scheduler/ClaudeTokenTracker.swift; sourceTree = "<group>"; };
 		A500180F /* SchedulerTaskForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scheduler/SchedulerTaskForm.swift; sourceTree = "<group>"; };
+		A5CC0001 /* ClaudeCommandBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Scheduler/ClaudeCommandBuilder.swift; sourceTree = "<group>"; };
 		A5001410 /* Panel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Panels/Panel.swift; sourceTree = "<group>"; };
 		A5001411 /* TerminalPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Panels/TerminalPanel.swift; sourceTree = "<group>"; };
 		A5001412 /* BrowserPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Panels/BrowserPanel.swift; sourceTree = "<group>"; };
@@ -386,6 +388,7 @@
 				A5001809 /* WorktreeIsolation.swift */,
 				A500180B /* SchedulerPage.swift */,
 				A500180F /* SchedulerTaskForm.swift */,
+				A5CC0001 /* ClaudeCommandBuilder.swift */,
 				A500180D /* ClaudeTokenTracker.swift */,
 				A5001600 /* SentryHelper.swift */,
 				A5001090 /* AppDelegate.swift */,
@@ -644,6 +647,7 @@
 				A5001808 /* WorktreeIsolation.swift in Sources */,
 				A500180A /* SchedulerPage.swift in Sources */,
 				A500180E /* SchedulerTaskForm.swift in Sources */,
+				A5CC0002 /* ClaudeCommandBuilder.swift in Sources */,
 				A500180C /* ClaudeTokenTracker.swift in Sources */,
 				A5001601 /* SentryHelper.swift in Sources */,
 				A5001093 /* AppDelegate.swift in Sources */,
@@ -837,8 +841,8 @@
 					"-framework",
 					Carbon,
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.app.debug;
-				PRODUCT_NAME = "cmux DEV";
+				PRODUCT_BUNDLE_IDENTIFIER = com.swannysec.crux.debug;
+				PRODUCT_NAME = "crux DEV";
 				SPARKLE_PUBLIC_KEY = "avjcgKibf1FTvhIjLBxhd+0HSpsXU4D0IGlVk8cgqRc=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "cmux-Bridging-Header.h";
@@ -877,8 +881,8 @@
 					Carbon,
 				);
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.cmuxterm.app;
-				PRODUCT_NAME = cmux;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swannysec.crux;
+				PRODUCT_NAME = crux;
 				SPARKLE_PUBLIC_KEY = "avjcgKibf1FTvhIjLBxhd+0HSpsXU4D0IGlVk8cgqRc=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "cmux-Bridging-Header.h";

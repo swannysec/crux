@@ -366,6 +366,116 @@ final class SchedulerSidebarTests: XCTestCase {
         XCTAssertTrue(names.contains("Agent"))
     }
 
+    // MARK: - ClaudeCommandBuilder
+
+    func testShellEscapeHandlesSimpleString() {
+        XCTAssertEqual(ClaudeCommandBuilder.shellEscape("hello"), "'hello'")
+    }
+
+    func testShellEscapeHandlesSingleQuotes() {
+        XCTAssertEqual(ClaudeCommandBuilder.shellEscape("it's"), "'it'\\''s'")
+    }
+
+    func testShellEscapeReplacesNewlinesWithSpaces() {
+        XCTAssertEqual(ClaudeCommandBuilder.shellEscape("line1\nline2"), "'line1 line2'")
+    }
+
+    func testShellEscapeHandlesEmptyString() {
+        XCTAssertEqual(ClaudeCommandBuilder.shellEscape(""), "''")
+    }
+
+    func testCommandGenerationDefaultConfig() {
+        let config = ClaudeCommandBuilder.Config(
+            model: .sonnet,
+            prompt: "say hello",
+            permission: .fullAuto
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertTrue(cmd.hasPrefix("claude -p 'say hello'"))
+        XCTAssertTrue(cmd.contains("--model sonnet"))
+        XCTAssertTrue(cmd.contains("--dangerously-skip-permissions"))
+        // fullAuto should NOT include --allowedTools
+        XCTAssertFalse(cmd.contains("--allowedTools"))
+    }
+
+    func testCommandGenerationWithPlanModeIncludesAllowedTools() {
+        let config = ClaudeCommandBuilder.Config(
+            model: .haiku,
+            prompt: "test",
+            permission: .plan,
+            toolPreset: .readOnly
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertTrue(cmd.contains("--permission-mode plan"))
+        XCTAssertTrue(cmd.contains("--allowedTools"))
+        XCTAssertTrue(cmd.contains("Glob"))
+    }
+
+    func testCommandGenerationWithCostControls() {
+        let config = ClaudeCommandBuilder.Config(
+            prompt: "test",
+            maxTurns: "10",
+            maxBudget: "5.00"
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertTrue(cmd.contains("--max-turns 10"))
+        XCTAssertTrue(cmd.contains("--max-budget-usd 5.00"))
+    }
+
+    func testCommandGenerationIgnoresInvalidCostControls() {
+        let config = ClaudeCommandBuilder.Config(
+            prompt: "test",
+            maxTurns: "abc",
+            maxBudget: "-1"
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertFalse(cmd.contains("--max-turns"))
+        XCTAssertFalse(cmd.contains("--max-budget"))
+    }
+
+    func testParseCommandRoundTripsModel() {
+        let config = ClaudeCommandBuilder.Config(model: .opus, prompt: "test prompt", permission: .fullAuto)
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.model, .opus)
+    }
+
+    func testParseCommandRoundTripsPermission() {
+        let config = ClaudeCommandBuilder.Config(prompt: "test", permission: .plan)
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.permission, .plan)
+    }
+
+    func testParseCommandRoundTripsPrompt() {
+        let config = ClaudeCommandBuilder.Config(prompt: "hello world", permission: .fullAuto)
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.prompt, "hello world")
+    }
+
+    func testParseCommandHandlesPromptWithSingleQuotes() {
+        let config = ClaudeCommandBuilder.Config(prompt: "it's a test", permission: .fullAuto)
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.prompt, "it's a test")
+    }
+
+    func testParseCommandRoundTripsCostControls() {
+        let config = ClaudeCommandBuilder.Config(prompt: "test", maxTurns: "5", maxBudget: "2.50")
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.maxTurns, "5")
+        XCTAssertEqual(parsed.maxBudget, "2.50")
+    }
+
+    func testParseCommandDetectsFullAutoPermission() {
+        let parsed = ClaudeCommandBuilder.parseCommand(
+            "claude -p 'test' --model sonnet --dangerously-skip-permissions"
+        )
+        XCTAssertEqual(parsed.permission, .fullAuto)
+    }
+
     // MARK: - Task CRUD via Engine (continued)
 
     @MainActor

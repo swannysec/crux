@@ -2480,6 +2480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             case .scheduler:
                 hasher.combine(2)
             }
+            hasher.combine(context.sidebarSelectionState.isSchedulerVisible)
 
             if let window = context.window ?? windowForMainWindowId(context.windowId) {
                 Self.hashFrame(window.frame, into: &hasher)

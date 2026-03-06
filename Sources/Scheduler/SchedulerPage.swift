@@ -4,7 +4,6 @@ struct SchedulerPage: View {
     @EnvironmentObject var schedulerEngine: SchedulerEngine
     @Binding var selection: SidebarSelection
     @Binding var isFormExpanded: Bool
-    @State private var cachedUsage = ClaudeTokenTracker.TokenUsage()
     @State private var formMode: SchedulerFormMode? = nil
     @State private var taskToDelete: ScheduledTask? = nil
     @State private var showDeleteConfirmation: Bool = false
@@ -45,12 +44,6 @@ struct SchedulerPage: View {
             if !isFormExpanded {
                 formMode = nil
             }
-        }
-        .task {
-            let usage = await Task.detached(priority: .utility) {
-                ClaudeTokenTracker.aggregateUsage()
-            }.value
-            cachedUsage = usage
         }
     }
 
@@ -95,6 +88,7 @@ struct SchedulerPage: View {
         if let mode = formMode {
             SchedulerTaskForm(
                 mode: mode,
+                existingTasks: schedulerEngine.tasks,
                 onSave: { task in
                     commit(task: task, runNow: false)
                 },
@@ -335,7 +329,7 @@ private struct SchedulerTaskRow: View {
             case .succeeded: return .green
             case .failed: return .red
             case .cancelled: return .orange
-            case .running: return cmuxAccentColor()
+            case .running: return cmuxAccentColor() // Unreachable; runningRun check above
             }
         }
         return Color.secondary.opacity(0.4)

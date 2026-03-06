@@ -69,13 +69,27 @@ extension TerminalController {
     private static let maxEnvValueLength = 4096
     private static let maxTasks = 500
 
-    // Environment variable names that cannot be set via scheduler API
-    private static let blockedEnvKeys: Set<String> = [
-        "PATH", "HOME", "SHELL", "USER", "LOGNAME",
-        "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
-        "LD_PRELOAD", "LD_LIBRARY_PATH",
-        "BASH_ENV", "ENV", "PROMPT_COMMAND",
-    ]
+    // Environment variable blocklist — shared with ClaudeCommandBuilder
+    private static let blockedEnvKeys = ClaudeCommandBuilder.blockedEnvKeys
+
+    /// Shared validation for environment variables (used by both create and update).
+    private func validateEnvironment(_ env: [String: String]) -> V2CallResult? {
+        guard env.count <= Self.maxEnvEntries else {
+            return .err(code: "invalid_params", message: "Environment exceeds maximum entries (\(Self.maxEnvEntries))", data: nil)
+        }
+        for (key, value) in env {
+            if !ClaudeCommandBuilder.isValidEnvKeyName(key) {
+                return .err(code: "invalid_params", message: "Environment variable name '\(key)' is invalid (must be [A-Za-z_][A-Za-z0-9_]*)", data: nil)
+            }
+            if ClaudeCommandBuilder.isBlockedEnvKey(key) {
+                return .err(code: "invalid_params", message: "Environment variable '\(key)' is not allowed", data: nil)
+            }
+            if value.count > Self.maxEnvValueLength {
+                return .err(code: "invalid_params", message: "Environment value for '\(key)' exceeds maximum length", data: nil)
+            }
+        }
+        return nil // valid
+    }
 
     private func v2SchedulerCreate(params: [String: Any]) -> V2CallResult {
         guard let name = params["name"] as? String,
@@ -107,17 +121,7 @@ extension TerminalController {
 
         // Validate environment: entry count, value lengths, blocked keys
         if let env = params["environment"] as? [String: String] {
-            guard env.count <= Self.maxEnvEntries else {
-                return .err(code: "invalid_params", message: "Environment exceeds maximum entries (\(Self.maxEnvEntries))", data: nil)
-            }
-            for (key, value) in env {
-                if Self.blockedEnvKeys.contains(key) || key.hasPrefix("DYLD_") || key.hasPrefix("LD_") {
-                    return .err(code: "invalid_params", message: "Environment variable '\(key)' is not allowed", data: nil)
-                }
-                if value.count > Self.maxEnvValueLength {
-                    return .err(code: "invalid_params", message: "Environment value for '\(key)' exceeds maximum length", data: nil)
-                }
-            }
+            if let err = validateEnvironment(env) { return err }
         }
 
         // Validate cron expression
@@ -208,6 +212,10 @@ extension TerminalController {
                     result = .err(code: "invalid_params", message: "Name cannot be empty", data: nil)
                     return
                 }
+                guard trimmed.count <= Self.maxNameLength else {
+                    result = .err(code: "invalid_params", message: "Name exceeds maximum length (\(Self.maxNameLength))", data: nil)
+                    return
+                }
                 task.name = trimmed
             }
             if let cron = params["cron"] as? String {
@@ -224,13 +232,25 @@ extension TerminalController {
                     result = .err(code: "invalid_params", message: "Command cannot be empty", data: nil)
                     return
                 }
+                guard trimmed.count <= Self.maxCommandLength else {
+                    result = .err(code: "invalid_params", message: "Command exceeds maximum length (\(Self.maxCommandLength))", data: nil)
+                    return
+                }
                 task.command = trimmed
             }
             if let workDir = params["working_directory"] as? String {
+                guard workDir.count <= Self.maxPathLength else {
+                    result = .err(code: "invalid_params", message: "Working directory exceeds maximum length (\(Self.maxPathLength))", data: nil)
+                    return
+                }
                 let trimmed = workDir.trimmingCharacters(in: .whitespacesAndNewlines)
                 task.workingDirectory = trimmed.isEmpty ? nil : trimmed
             }
             if let env = params["environment"] as? [String: String] {
+                if let err = self.validateEnvironment(env) {
+                    result = err
+                    return
+                }
                 task.environment = env
             }
             if let enabled = params["is_enabled"] as? Bool {
@@ -429,7 +449,7 @@ extension TerminalController {
             }
 
             // Find the terminal panel via the run's dedicated workspace
-            let workspaceId = engine.runToWorkspaceId[runId] ?? engine.schedulerWorkspaceId
+            let workspaceId: UUID? = engine.runToWorkspaceId[runId]
             guard let app = AppDelegate.shared,
                   let tabManager = app.tabManager,
                   let wsId = workspaceId,

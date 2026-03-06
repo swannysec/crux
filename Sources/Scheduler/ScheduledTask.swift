@@ -43,6 +43,24 @@ struct ScheduledTask: Codable, Identifiable, Equatable, Sendable {
         self.onFailure = onFailure
         self.createdAt = createdAt
     }
+
+    // Custom Codable to default createdAt when decoding old JSON without the key.
+    // Without this, synthesized decode fails and loadTasks returns [], wiping saved tasks.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        cronExpression = try container.decode(String.self, forKey: .cronExpression)
+        command = try container.decode(String.self, forKey: .command)
+        workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
+        environment = try container.decodeIfPresent([String: String].self, forKey: .environment)
+        isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
+        allowOverlap = try container.decode(Bool.self, forKey: .allowOverlap)
+        useWorktree = try container.decodeIfPresent(Bool.self, forKey: .useWorktree)
+        onSuccess = try container.decodeIfPresent(String.self, forKey: .onSuccess)
+        onFailure = try container.decodeIfPresent(String.self, forKey: .onFailure)
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+    }
 }
 
 // MARK: - TaskRunStatus
