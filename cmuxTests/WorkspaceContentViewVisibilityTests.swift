@@ -1,9 +1,9 @@
 import XCTest
 
-#if canImport(cmux_DEV)
-@testable import cmux_DEV
-#elseif canImport(cmux)
-@testable import cmux
+#if canImport(crux_DEV)
+@testable import crux_DEV
+#elseif canImport(crux)
+@testable import crux
 #endif
 
 final class WorkspaceContentViewVisibilityTests: XCTestCase {
