@@ -2094,6 +2094,10 @@ struct ContentView: View {
                 .onChange(of: isSchedulerFormExpanded) { expanded in
                     // When the scheduler form is expanded, unfocus the terminal to prevent
                     // ensureFocus retries from stealing first responder from SwiftUI text fields.
+                    // The unfocus must happen both immediately AND after the portal width change
+                    // settles. The panel width change (200→400px) triggers portal frame updates
+                    // on the next runloop tick, which can cause the terminal's becomeFirstResponder
+                    // to fire, calling focusPanel → panel.focus() and re-enabling isActive.
                     if expanded, let tabManager = AppDelegate.shared?.tabManager,
                        let workspace = tabManager.tabs.first(where: { $0.id == tabManager.selectedTabId }),
                        let panel = workspace.focusedTerminalPanel {
@@ -2105,6 +2109,13 @@ struct ContentView: View {
                                 sidebarSelectionState.isSchedulerVisible ? schedulerPanelWidth : 0,
                                 window: window
                             )
+                        }
+                        // Re-unfocus after the portal width update to catch any
+                        // first-responder re-acquisition triggered by the resize.
+                        if expanded, let tabManager = AppDelegate.shared?.tabManager,
+                           let workspace = tabManager.tabs.first(where: { $0.id == tabManager.selectedTabId }),
+                           let panel = workspace.focusedTerminalPanel {
+                            panel.unfocus()
                         }
                     }
                 }

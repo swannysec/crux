@@ -62,11 +62,9 @@ struct SchedulerTaskForm: View {
     @State private var claudeModel: ClaudeModel = .sonnet
     @State private var claudePrompt: String = ""
     @State private var claudeProject: String = ""
-    @State private var claudePermission: ClaudePermissionMode = .fullAuto
     @State private var claudeMaxTurns: String = ""
     @State private var claudeMaxBudget: String = ""
-    @State private var claudeToolPreset: ClaudeToolPreset = .standard
-    @State private var claudeCustomTools: Set<String> = ["Read", "Glob", "Grep", "WebSearch"]
+    @State private var useSandbox: Bool = false
 
     // Advanced
     @State private var showAdvanced: Bool = false
@@ -141,9 +139,9 @@ struct SchedulerTaskForm: View {
                         claudeModel: $claudeModel,
                         claudePrompt: $claudePrompt,
                         claudeProject: $claudeProject,
-                        claudePermission: $claudePermission,
                         claudeMaxTurns: $claudeMaxTurns,
-                        claudeMaxBudget: $claudeMaxBudget
+                        claudeMaxBudget: $claudeMaxBudget,
+                        useSandbox: $useSandbox
                     )
                 } else {
                     // Command
@@ -170,41 +168,6 @@ struct SchedulerTaskForm: View {
                 // Advanced section
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
                     VStack(alignment: .leading, spacing: 12) {
-                        if taskType == .claude {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Allowed tools")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Picker("", selection: $claudeToolPreset) {
-                                    ForEach(ClaudeToolPreset.allCases) { preset in
-                                        Text(preset.rawValue).tag(preset)
-                                    }
-                                }
-                                .labelsHidden()
-
-                                if claudeToolPreset == .custom {
-                                    LazyVGrid(
-                                        columns: [GridItem(.flexible()), GridItem(.flexible())],
-                                        spacing: 4
-                                    ) {
-                                        ForEach(ClaudeTool.all) { tool in
-                                            Toggle(tool.name, isOn: Binding(
-                                                get: { claudeCustomTools.contains(tool.name) },
-                                                set: { enabled in
-                                                    if enabled {
-                                                        claudeCustomTools.insert(tool.name)
-                                                    } else {
-                                                        claudeCustomTools.remove(tool.name)
-                                                    }
-                                                }
-                                            ))
-                                            .toggleStyle(.checkbox)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         Toggle("Allow overlap", isOn: $allowOverlap)
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -257,7 +220,7 @@ struct SchedulerTaskForm: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                             .font(.caption)
-                        Text("Scheduled Claude tasks run with full permissions and no human oversight. Review your prompt and cost controls carefully.")
+                        Text("Claude tasks run with unrestricted permissions (--dangerously-skip-permissions) since interactive prompts cannot be answered in headless mode. Enable sandbox mode for filesystem and network isolation.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -337,11 +300,9 @@ struct SchedulerTaskForm: View {
         ClaudeCommandBuilder.Config(
             model: claudeModel,
             prompt: claudePrompt,
-            permission: claudePermission,
             maxTurns: claudeMaxTurns,
             maxBudget: claudeMaxBudget,
-            toolPreset: claudeToolPreset,
-            customTools: claudeCustomTools
+            useSandbox: useSandbox
         )
     }
 
@@ -387,11 +348,9 @@ struct SchedulerTaskForm: View {
             let config = ClaudeCommandBuilder.parseCommand(task.command)
             claudeModel = config.model
             claudePrompt = config.prompt
-            claudePermission = config.permission
             claudeMaxTurns = config.maxTurns
             claudeMaxBudget = config.maxBudget
-            claudeToolPreset = config.toolPreset
-            claudeCustomTools = config.customTools
+            useSandbox = task.useSandbox ?? config.useSandbox
             claudeProject = task.workingDirectory ?? ""
         } else {
             taskType = .general
@@ -451,6 +410,7 @@ struct SchedulerTaskForm: View {
             isEnabled: true,
             allowOverlap: allowOverlap,
             useWorktree: worktreeOption.toBool,
+            useSandbox: (taskType == .claude && useSandbox) ? true : nil,
             onSuccess: onSuccessTaskId?.uuidString,
             onFailure: onFailureTaskId?.uuidString,
             createdAt: editingCreatedAt ?? Date()
@@ -589,9 +549,9 @@ private struct ClaudeFieldsSection: View {
     @Binding var claudeModel: ClaudeModel
     @Binding var claudePrompt: String
     @Binding var claudeProject: String
-    @Binding var claudePermission: ClaudePermissionMode
     @Binding var claudeMaxTurns: String
     @Binding var claudeMaxBudget: String
+    @Binding var useSandbox: Bool
 
     var body: some View {
         // Model
@@ -616,20 +576,6 @@ private struct ClaudeFieldsSection: View {
             TextField("~/code/myproject", text: $claudeProject)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
-        }
-
-        // Permission mode
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Permission Mode")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Picker("", selection: $claudePermission) {
-                ForEach(ClaudePermissionMode.allCases) { perm in
-                    Text(perm.displayName).tag(perm)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
         }
 
         // Prompt
@@ -672,6 +618,14 @@ private struct ClaudeFieldsSection: View {
                         .font(.system(.body, design: .monospaced))
                 }
             }
+        }
+
+        // Sandbox mode
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Sandbox Mode", isOn: $useSandbox)
+            Text("Restricts file writes and network access to the working directory")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

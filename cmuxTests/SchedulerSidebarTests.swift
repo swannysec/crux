@@ -316,22 +316,6 @@ final class SchedulerSidebarTests: XCTestCase {
 
     // MARK: - Claude Mode Types
 
-    func testClaudeToolPresetReadOnlyContainsExpectedTools() {
-        let tools = ClaudeToolPreset.readOnly.tools
-        XCTAssertNotNil(tools)
-        XCTAssertEqual(tools, ["Read", "Glob", "Grep", "WebSearch"])
-    }
-
-    func testClaudeToolPresetStandardContainsExpectedTools() {
-        let tools = ClaudeToolPreset.standard.tools
-        XCTAssertNotNil(tools)
-        XCTAssertEqual(tools, ["Read", "Glob", "Grep", "Edit", "Bash", "Write", "WebSearch"])
-    }
-
-    func testClaudeToolPresetFullReturnsNil() {
-        XCTAssertNil(ClaudeToolPreset.full.tools, "Full preset should return nil (all tools)")
-    }
-
     func testClaudeModelEnumHasThreeModels() {
         XCTAssertEqual(ClaudeModel.allCases.count, 3)
         XCTAssertTrue(ClaudeModel.allCases.contains(.opus))
@@ -339,31 +323,8 @@ final class SchedulerSidebarTests: XCTestCase {
         XCTAssertTrue(ClaudeModel.allCases.contains(.haiku))
     }
 
-    func testClaudePermissionModeCLIFlags() {
-        XCTAssertEqual(
-            ClaudePermissionMode.plan.cliFlag,
-            "--permission-mode plan"
-        )
-        XCTAssertEqual(
-            ClaudePermissionMode.autoEdit.cliFlag,
-            "--permission-mode acceptEdits"
-        )
-        XCTAssertEqual(
-            ClaudePermissionMode.fullAuto.cliFlag,
-            "--dangerously-skip-permissions"
-        )
-    }
-
     func testTaskTypeModeDefaultIsClaude() {
         XCTAssertEqual(TaskTypeMode.allCases.first, .claude)
-    }
-
-    func testClaudeToolAllContainsTenTools() {
-        XCTAssertEqual(ClaudeTool.all.count, 10)
-        let names = Set(ClaudeTool.all.map(\.name))
-        XCTAssertTrue(names.contains("Read"))
-        XCTAssertTrue(names.contains("Bash"))
-        XCTAssertTrue(names.contains("Agent"))
     }
 
     // MARK: - ClaudeCommandBuilder
@@ -387,28 +348,36 @@ final class SchedulerSidebarTests: XCTestCase {
     func testCommandGenerationDefaultConfig() {
         let config = ClaudeCommandBuilder.Config(
             model: .sonnet,
-            prompt: "say hello",
-            permission: .fullAuto
+            prompt: "say hello"
         )
         let cmd = ClaudeCommandBuilder.command(from: config)
         XCTAssertTrue(cmd.hasPrefix("claude -p 'say hello'"))
         XCTAssertTrue(cmd.contains("--model sonnet"))
         XCTAssertTrue(cmd.contains("--dangerously-skip-permissions"))
-        // fullAuto should NOT include --allowedTools
-        XCTAssertFalse(cmd.contains("--allowedTools"))
+        XCTAssertFalse(cmd.contains("--settings"))
     }
 
-    func testCommandGenerationWithPlanModeIncludesAllowedTools() {
+    func testCommandGenerationWithSandboxEnabled() {
         let config = ClaudeCommandBuilder.Config(
             model: .haiku,
             prompt: "test",
-            permission: .plan,
-            toolPreset: .readOnly
+            useSandbox: true
         )
         let cmd = ClaudeCommandBuilder.command(from: config)
-        XCTAssertTrue(cmd.contains("--permission-mode plan"))
-        XCTAssertTrue(cmd.contains("--allowedTools"))
-        XCTAssertTrue(cmd.contains("Glob"))
+        XCTAssertTrue(cmd.contains("--dangerously-skip-permissions"))
+        XCTAssertTrue(cmd.contains("--settings"))
+        XCTAssertTrue(cmd.contains("\"sandbox\""))
+        XCTAssertTrue(cmd.contains("\"enabled\":true"))
+    }
+
+    func testCommandGenerationWithoutSandbox() {
+        let config = ClaudeCommandBuilder.Config(
+            model: .sonnet,
+            prompt: "test",
+            useSandbox: false
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertFalse(cmd.contains("--settings"))
     }
 
     func testCommandGenerationWithCostControls() {
@@ -434,31 +403,38 @@ final class SchedulerSidebarTests: XCTestCase {
     }
 
     func testParseCommandRoundTripsModel() {
-        let config = ClaudeCommandBuilder.Config(model: .opus, prompt: "test prompt", permission: .fullAuto)
+        let config = ClaudeCommandBuilder.Config(model: .opus, prompt: "test prompt")
         let cmd = ClaudeCommandBuilder.command(from: config)
         let parsed = ClaudeCommandBuilder.parseCommand(cmd)
         XCTAssertEqual(parsed.model, .opus)
     }
 
-    func testParseCommandRoundTripsPermission() {
-        let config = ClaudeCommandBuilder.Config(prompt: "test", permission: .plan)
-        let cmd = ClaudeCommandBuilder.command(from: config)
-        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
-        XCTAssertEqual(parsed.permission, .plan)
-    }
-
     func testParseCommandRoundTripsPrompt() {
-        let config = ClaudeCommandBuilder.Config(prompt: "hello world", permission: .fullAuto)
+        let config = ClaudeCommandBuilder.Config(prompt: "hello world")
         let cmd = ClaudeCommandBuilder.command(from: config)
         let parsed = ClaudeCommandBuilder.parseCommand(cmd)
         XCTAssertEqual(parsed.prompt, "hello world")
     }
 
     func testParseCommandHandlesPromptWithSingleQuotes() {
-        let config = ClaudeCommandBuilder.Config(prompt: "it's a test", permission: .fullAuto)
+        let config = ClaudeCommandBuilder.Config(prompt: "it's a test")
         let cmd = ClaudeCommandBuilder.command(from: config)
         let parsed = ClaudeCommandBuilder.parseCommand(cmd)
         XCTAssertEqual(parsed.prompt, "it's a test")
+    }
+
+    func testParseCommandRoundTripsSandbox() {
+        let config = ClaudeCommandBuilder.Config(prompt: "test", useSandbox: true)
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertTrue(parsed.useSandbox)
+    }
+
+    func testParseCommandDefaultsToNoSandbox() {
+        let parsed = ClaudeCommandBuilder.parseCommand(
+            "claude -p 'test' --model sonnet --dangerously-skip-permissions"
+        )
+        XCTAssertFalse(parsed.useSandbox)
     }
 
     func testParseCommandRoundTripsCostControls() {
@@ -469,11 +445,13 @@ final class SchedulerSidebarTests: XCTestCase {
         XCTAssertEqual(parsed.maxBudget, "2.50")
     }
 
-    func testParseCommandDetectsFullAutoPermission() {
+    func testParseCommandHandlesLegacyPermissionFlags() {
+        // Old commands with --permission-mode should still parse (prompt is extracted)
         let parsed = ClaudeCommandBuilder.parseCommand(
-            "claude -p 'test' --model sonnet --dangerously-skip-permissions"
+            "claude -p 'test' --model sonnet --permission-mode plan"
         )
-        XCTAssertEqual(parsed.permission, .fullAuto)
+        XCTAssertEqual(parsed.prompt, "test")
+        XCTAssertEqual(parsed.model, .sonnet)
     }
 
     // MARK: - Task CRUD via Engine (continued)

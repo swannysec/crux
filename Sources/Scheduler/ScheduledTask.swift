@@ -12,6 +12,7 @@ struct ScheduledTask: Codable, Identifiable, Equatable, Sendable {
     var isEnabled: Bool
     var allowOverlap: Bool
     var useWorktree: Bool?
+    var useSandbox: Bool?
     var onSuccess: String?
     var onFailure: String?
     let createdAt: Date
@@ -26,6 +27,7 @@ struct ScheduledTask: Codable, Identifiable, Equatable, Sendable {
         isEnabled: Bool = true,
         allowOverlap: Bool = false,
         useWorktree: Bool? = nil,
+        useSandbox: Bool? = nil,
         onSuccess: String? = nil,
         onFailure: String? = nil,
         createdAt: Date = Date()
@@ -39,6 +41,7 @@ struct ScheduledTask: Codable, Identifiable, Equatable, Sendable {
         self.isEnabled = isEnabled
         self.allowOverlap = allowOverlap
         self.useWorktree = useWorktree
+        self.useSandbox = useSandbox
         self.onSuccess = onSuccess
         self.onFailure = onFailure
         self.createdAt = createdAt
@@ -57,6 +60,7 @@ struct ScheduledTask: Codable, Identifiable, Equatable, Sendable {
         isEnabled = try container.decode(Bool.self, forKey: .isEnabled)
         allowOverlap = try container.decode(Bool.self, forKey: .allowOverlap)
         useWorktree = try container.decodeIfPresent(Bool.self, forKey: .useWorktree)
+        useSandbox = try container.decodeIfPresent(Bool.self, forKey: .useSandbox)
         onSuccess = try container.decodeIfPresent(String.self, forKey: .onSuccess)
         onFailure = try container.decodeIfPresent(String.self, forKey: .onFailure)
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()

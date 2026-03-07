@@ -139,6 +139,7 @@ extension TerminalController {
             isEnabled: (params["is_enabled"] as? Bool) ?? true,
             allowOverlap: (params["allow_overlap"] as? Bool) ?? false,
             useWorktree: params["use_worktree"] as? Bool,
+            useSandbox: params["use_sandbox"] as? Bool,
             onSuccess: params["on_success"] as? String,
             onFailure: params["on_failure"] as? String
         )
@@ -261,6 +262,9 @@ extension TerminalController {
             }
             if params.keys.contains("use_worktree") {
                 task.useWorktree = params["use_worktree"] as? Bool
+            }
+            if params.keys.contains("use_sandbox") {
+                task.useSandbox = params["use_sandbox"] as? Bool
             }
             if params.keys.contains("on_success") {
                 let val = params["on_success"] as? String
@@ -502,6 +506,7 @@ extension TerminalController {
         if let workDir = task.workingDirectory { dict["working_directory"] = workDir }
         if let env = task.environment { dict["environment"] = env }
         if let useWorktree = task.useWorktree { dict["use_worktree"] = useWorktree }
+        if let useSandbox = task.useSandbox { dict["use_sandbox"] = useSandbox }
         if let onSuccess = task.onSuccess { dict["on_success"] = onSuccess }
         if let onFailure = task.onFailure { dict["on_failure"] = onFailure }
 

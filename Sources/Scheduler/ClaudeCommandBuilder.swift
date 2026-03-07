@@ -18,71 +18,11 @@ enum ClaudeModel: String, CaseIterable, Identifiable {
     var displayName: String { rawValue.capitalized }
 }
 
-// MARK: - ClaudePermissionMode
-
-enum ClaudePermissionMode: String, CaseIterable, Identifiable {
-    case plan = "plan"
-    case autoEdit = "acceptEdits"
-    case fullAuto = "bypass"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .plan: return "Plan (safe)"
-        case .autoEdit: return "Auto-approve"
-        case .fullAuto: return "Unrestricted"
-        }
-    }
-
-    var cliFlag: String {
-        switch self {
-        case .plan: return "--permission-mode plan"
-        case .autoEdit: return "--permission-mode acceptEdits"
-        case .fullAuto: return "--dangerously-skip-permissions"
-        }
-    }
-}
-
-// MARK: - ClaudeToolPreset
-
-enum ClaudeToolPreset: String, CaseIterable, Identifiable {
-    case readOnly = "Read-only"
-    case standard = "Standard"
-    case full = "Full"
-    case custom = "Custom"
-
-    var id: String { rawValue }
-
-    var tools: Set<String>? {
-        switch self {
-        case .readOnly: return ["Read", "Glob", "Grep", "WebSearch"]
-        case .standard: return ["Read", "Glob", "Grep", "Edit", "Bash", "Write", "WebSearch"]
-        case .full: return nil
-        case .custom: return nil
-        }
-    }
-}
-
-// MARK: - ClaudeTool
-
-struct ClaudeTool: Identifiable, Hashable {
-    let name: String
-    var id: String { name }
-
-    static let all: [ClaudeTool] = [
-        "Read", "Edit", "Write", "Bash", "Glob", "Grep",
-        "WebSearch", "WebFetch", "Agent", "Notebook",
-    ].map { ClaudeTool(name: $0) }
-}
-
 // MARK: - ClaudeCommandBuilder
 
 /// Encapsulates all Claude CLI knowledge: command generation, shell escaping,
 /// and command parsing. Decoupled from SwiftUI so the socket API can reuse it.
 struct ClaudeCommandBuilder {
-
-    static let knownToolNames: Set<String> = Set(ClaudeTool.all.map(\.name))
 
     /// Environment variable names that should not be set by users.
     /// Shared between the UI form and socket API validation paths.
@@ -151,11 +91,9 @@ struct ClaudeCommandBuilder {
     struct Config {
         var model: ClaudeModel = .sonnet
         var prompt: String = ""
-        var permission: ClaudePermissionMode = .fullAuto
         var maxTurns: String = ""
         var maxBudget: String = ""
-        var toolPreset: ClaudeToolPreset = .standard
-        var customTools: Set<String> = ["Read", "Glob", "Grep", "WebSearch"]
+        var useSandbox: Bool = false
     }
 
     static let maxPromptLength = 32_000
@@ -166,7 +104,7 @@ struct ClaudeCommandBuilder {
     static func commandParts(from config: Config) -> [String] {
         var parts = ["claude", "-p", shellEscape(config.prompt)]
         parts.append(contentsOf: ["--model", config.model.rawValue])
-        parts.append(config.permission.cliFlag)
+        parts.append("--dangerously-skip-permissions")
 
         if let turns = Int(config.maxTurns), turns > 0, turns <= maxTurns {
             parts.append(contentsOf: ["--max-turns", "\(turns)"])
@@ -175,22 +113,11 @@ struct ClaudeCommandBuilder {
             parts.append(contentsOf: ["--max-budget-usd", String(format: "%.2f", budget)])
         }
 
-        // --allowedTools is ignored with --dangerously-skip-permissions
-        if config.permission != .fullAuto {
-            let toolsList: String? = {
-                switch config.toolPreset {
-                case .readOnly, .standard:
-                    return config.toolPreset.tools?.sorted().joined(separator: ",")
-                case .full:
-                    return nil
-                case .custom:
-                    let safe = config.customTools.filter { knownToolNames.contains($0) }
-                    return safe.isEmpty ? nil : safe.sorted().joined(separator: ",")
-                }
-            }()
-            if let tools = toolsList {
-                parts.append(contentsOf: ["--allowedTools", shellEscape(tools)])
-            }
+        if config.useSandbox {
+            parts.append(contentsOf: [
+                "--settings",
+                shellEscape("{\"sandbox\":{\"enabled\":true}}")
+            ])
         }
 
         return parts
@@ -223,20 +150,6 @@ struct ClaudeCommandBuilder {
             }
         }
 
-        // Extract permission mode
-        if cmd.contains("--dangerously-skip-permissions") {
-            config.permission = .fullAuto
-        } else if let range = cmd.range(
-            of: #"--permission-mode\s+([\w-]+)"#, options: .regularExpression
-        ) {
-            let modeStr = String(cmd[range]).replacingOccurrences(
-                of: "--permission-mode ", with: ""
-            ).trimmingCharacters(in: .whitespaces)
-            if let perm = ClaudePermissionMode.allCases.first(where: { $0.rawValue == modeStr }) {
-                config.permission = perm
-            }
-        }
-
         // Extract --max-turns <value>
         if let range = cmd.range(of: #"--max-turns\s+(\d+)"#, options: .regularExpression) {
             config.maxTurns = String(cmd[range]).replacingOccurrences(
@@ -253,29 +166,9 @@ struct ClaudeCommandBuilder {
             ).trimmingCharacters(in: .whitespaces)
         }
 
-        // Extract --allowedTools '<csv>'
-        if let range = cmd.range(
-            of: #"--allowedTools\s+'([^']+)'"#, options: .regularExpression
-        ) {
-            let toolsMatch = String(cmd[range])
-            if let qStart = toolsMatch.firstIndex(of: "'"),
-               let qEnd = toolsMatch[toolsMatch.index(after: qStart)...].firstIndex(of: "'")
-            {
-                let csv = String(toolsMatch[toolsMatch.index(after: qStart)..<qEnd])
-                let tools = Set(csv.split(separator: ",").map { String($0) })
-                let validTools = tools.filter { knownToolNames.contains($0) }
-
-                if validTools == ClaudeToolPreset.readOnly.tools {
-                    config.toolPreset = .readOnly
-                } else if validTools == ClaudeToolPreset.standard.tools {
-                    config.toolPreset = .standard
-                } else {
-                    config.toolPreset = .custom
-                    config.customTools = validTools
-                }
-            }
-        } else if !cmd.contains("--allowedTools") {
-            config.toolPreset = .full
+        // Detect sandbox mode from --settings containing sandbox.enabled
+        if cmd.contains("\"sandbox\"") && cmd.contains("\"enabled\":true") {
+            config.useSandbox = true
         }
 
         // Extract prompt: the argument after -p, which is single-quoted.
