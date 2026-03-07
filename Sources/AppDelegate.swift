@@ -2480,6 +2480,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             case .scheduler:
                 hasher.combine(2)
             }
+            hasher.combine(context.sidebarSelectionState.isSchedulerVisible)
 
             if let window = context.window ?? windowForMainWindowId(context.windowId) {
                 Self.hashFrame(window.frame, into: &hasher)
@@ -7971,7 +7972,7 @@ enum MenuBarBuildHintFormatter {
     ) -> String? {
         guard isDebugBuild else { return nil }
         let normalized = appName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let prefix = "cmux DEV"
+        let prefix = "crux DEV"
         guard normalized.hasPrefix(prefix) else { return "Build: DEV" }
 
         let suffix = String(normalized.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)

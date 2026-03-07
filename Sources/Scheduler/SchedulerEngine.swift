@@ -36,11 +36,12 @@ final class SchedulerEngine: ObservableObject {
     /// Injectable git command runner (swapped in tests).
     var gitRunner: GitCommandRunner = ProcessGitCommandRunner()
 
-    /// The workspace ID used for scheduler task terminals (lazily created).
-    var schedulerWorkspaceId: UUID?
-
     /// Maps runId -> workspaceId for per-run workspace tracking (used by Focus).
     var runToWorkspaceId: [UUID: UUID] = [:]
+
+    /// Maps taskId -> workspaceId for the most recent run's workspace.
+    /// Used to close the previous workspace when a new run starts for the same task.
+    var taskToWorkspaceId: [UUID: UUID] = [:]
 
     private var timer: DispatchSourceTimer?
     private let persistenceFileURL: URL?
@@ -90,6 +91,7 @@ final class SchedulerEngine: ObservableObject {
         )
         t.setEventHandler { [weak self] in
             guard let self else { return }
+            self.checkRunCompletions()
             self.evaluateSchedules()
         }
         t.resume()
@@ -99,6 +101,45 @@ final class SchedulerEngine: ObservableObject {
     func stop() {
         timer?.cancel()
         timer = nil
+    }
+
+    // MARK: - Completion Polling
+
+    /// Check for marker files written by initial_input when tasks complete.
+    /// Each running task writes its exit code to a .done file; this method
+    /// reads those files and updates run status accordingly.
+    func checkRunCompletions() {
+        for i in runs.indices where runs[i].status == .running {
+            let markerPath = Self.contextDirectory
+                .appendingPathComponent("\(runs[i].id.uuidString).done")
+            guard let data = try? String(contentsOf: markerPath, encoding: .utf8) else { continue }
+            let exitCode = Int32(data.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1
+
+            let runId = runs[i].id
+            let wsId = runToWorkspaceId[runId] ?? UUID()
+            let panelId = runs[i].panelId
+
+            runs[i].status = exitCode == 0 ? .succeeded : .failed
+            runs[i].exitCode = exitCode
+            runs[i].completedAt = Date()
+
+            cleanupRunResources(runId: runId, panelId: panelId)
+            try? FileManager.default.removeItem(at: markerPath)
+
+            // Notification
+            let task = tasks.first(where: { $0.id == runs[i].taskId })
+            let taskName = task?.name ?? "Unknown Task"
+            let statusText = exitCode == 0 ? "completed successfully" : "failed (exit \(exitCode))"
+            TerminalNotificationStore.shared.addNotification(
+                tabId: wsId,
+                surfaceId: panelId ?? UUID(),
+                title: taskName,
+                subtitle: "Scheduled Task",
+                body: "Task \(statusText)"
+            )
+
+            pruneCompletedRuns()
+        }
     }
 
     // MARK: - Evaluation
@@ -157,11 +198,29 @@ final class SchedulerEngine: ObservableObject {
     func cleanupStaleRuns() {
         for i in runs.indices {
             if runs[i].status == .running {
+                cleanupRunResources(runId: runs[i].id, panelId: runs[i].panelId)
                 runs[i].status = .cancelled
                 runs[i].completedAt = Date()
             }
         }
         pruneCompletedRuns()
+        cleanupOrphanedContextFiles()
+    }
+
+    /// Remove context files whose run IDs are not in the active runs list.
+    private func cleanupOrphanedContextFiles() {
+        let activeRunIds = Set(runs.map { $0.id.uuidString })
+        let contextDir = Self.contextDirectory
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: contextDir,
+            includingPropertiesForKeys: nil
+        ) else { return }
+        for file in files where file.pathExtension == "json" || file.pathExtension == "done" {
+            let runId = file.deletingPathExtension().lastPathComponent
+            if !activeRunIds.contains(runId) {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
     }
 
     // MARK: - Persistence
@@ -257,6 +316,12 @@ final class SchedulerEngine: ObservableObject {
         createContextFile(for: task, run: run, at: contextFileURL)
         env["CMUX_TASK_CONTEXT_FILE"] = contextFileURL.path
 
+        // Close the previous workspace for this task (if any) to prevent accumulation.
+        if let previousWsId = taskToWorkspaceId[task.id],
+           let previousWs = tabManager.tabs.first(where: { $0.id == previousWsId }) {
+            tabManager.closeTab(previousWs)
+        }
+
         // Create a dedicated workspace for this run (non-intrusive: don't select it).
         let workspace = tabManager.addWorkspace(
             workingDirectory: effectiveWorkDir,
@@ -264,35 +329,24 @@ final class SchedulerEngine: ObservableObject {
         )
         workspace.customTitle = "[\(task.name)]"
 
-        // Track workspace for this run (used by Focus and snapshot)
+        // Track workspace for this run and task
         runToWorkspaceId[run.id] = workspace.id
-        schedulerWorkspaceId = workspace.id
+        taskToWorkspaceId[task.id] = workspace.id
 
-        // Create a terminal panel that uses initial_input to inject the command
-        // into the shell after it starts. Environment variables are passed via
-        // additionalEnvironment (set on the process before the shell starts),
-        // so no export commands are needed in the input.
-        //
-        // The initial_input sequence:
-        //   1. clear — start with a clean terminal
-        //   2. banner — show task name and timestamp for context
-        //   3. command — the actual task command (exit code captured)
-        //   4. completion message — indicate review mode with exit code
-        let safeName = task.name.replacingOccurrences(of: "'", with: "")
-        let banner = "echo '--- \(safeName) ---'; echo ''"
-        let doneMsg = "echo ''; echo \"--- Task finished (exit $CMUX_EXIT) --- Output above is read-only. Close tab when done.\""
-        let fullCommand = "clear; \(banner); \(task.command); CMUX_EXIT=$?; \(doneMsg); exit $CMUX_EXIT\n"
-
-        // wait_after_command keeps the terminal visible after the shell exits
-        // (triggered by `exit $CMUX_EXIT` at the end of initial_input) so the
-        // user can review output. This also triggers COMMAND_FINISHED for status tracking.
-        var config = ghostty_surface_config_new()
-        config.wait_after_command = true
+        // Use initial_input to inject the command into the default shell.
+        // This preserves the full shell environment so interactive tools render
+        // correctly. A marker file signals completion to the polling timer.
+        let safeName = ClaudeCommandBuilder.shellEscape(task.name)
+        let markerFile = Self.contextDirectory
+            .appendingPathComponent("\(run.id.uuidString).done").path
+        let banner = "echo '---' \(safeName) '---'; echo ''"
+        let doneMsg = "echo ''; echo \"--- Task finished (exit $CMUX_EXIT) ---\""
+        let marker = "echo $CMUX_EXIT > \(ClaudeCommandBuilder.shellEscape(markerFile))"
+        let fullCommand = "clear; \(banner); \(task.command); CMUX_EXIT=$?; \(doneMsg); \(marker)\n"
 
         let panel = TerminalPanel(
             workspaceId: workspace.id,
             context: GHOSTTY_SURFACE_CONTEXT_TAB,
-            configTemplate: config,
             workingDirectory: effectiveWorkDir,
             initialInput: fullCommand,
             additionalEnvironment: env
@@ -313,6 +367,15 @@ final class SchedulerEngine: ObservableObject {
             workspace.bonsplitController.selectTab(tabId)
         }
 
+        // Scheduler workspaces are background workspaces — prevent ALL terminals
+        // from stealing focus via ensureFocus retries. Focus is only granted
+        // explicitly when the user clicks the Focus button.
+        for ws_panel in workspace.panels.values {
+            if let termPanel = ws_panel as? TerminalPanel {
+                termPanel.unfocus()
+            }
+        }
+
         // Track panel -> run mapping
         panelToRunId[panel.id] = run.id
 
@@ -320,6 +383,24 @@ final class SchedulerEngine: ObservableObject {
         if let runIndex = runs.firstIndex(where: { $0.id == run.id }) {
             runs[runIndex].panelId = panel.id
         }
+    }
+
+    /// Shared cleanup for a completed/cancelled run: removes tracking map entries,
+    /// cleans up worktree and context file.
+    private func cleanupRunResources(runId: UUID, panelId: UUID?) {
+        if let panelId {
+            panelToRunId.removeValue(forKey: panelId)
+        }
+        runToWorkspaceId.removeValue(forKey: runId)
+        if let wtInfo = runWorktreeInfo.removeValue(forKey: runId) {
+            WorktreeIsolation.cleanupWorktree(
+                repoPath: wtInfo.repoPath,
+                worktreePath: wtInfo.worktreePath,
+                gitRunner: gitRunner
+            )
+        }
+        let contextFile = Self.contextDirectory.appendingPathComponent("\(runId).json")
+        try? FileManager.default.removeItem(at: contextFile)
     }
 
     /// Handle COMMAND_FINISHED callback from Ghostty.
@@ -338,8 +419,7 @@ final class SchedulerEngine: ObservableObject {
         runs[runIndex].exitCode = exitCode
         runs[runIndex].completedAt = Date()
 
-        panelToRunId.removeValue(forKey: panelId)
-        runToWorkspaceId.removeValue(forKey: runId)
+        cleanupRunResources(runId: runId, panelId: panelId)
 
         // Look up the task for notification and chaining
         let taskId = runs[runIndex].taskId
@@ -349,25 +429,12 @@ final class SchedulerEngine: ObservableObject {
         // Fire notification via TerminalNotificationStore
         let statusText = exitCode == 0 ? "completed successfully" : "failed (exit \(exitCode))"
         TerminalNotificationStore.shared.addNotification(
-            tabId: workspaceId ?? schedulerWorkspaceId ?? UUID(),
+            tabId: workspaceId ?? UUID(),
             surfaceId: panelId,
             title: taskName,
             subtitle: "Scheduled Task",
             body: "Task \(statusText)"
         )
-
-        // Clean up worktree if one was created for this run
-        if let wtInfo = runWorktreeInfo.removeValue(forKey: runId) {
-            WorktreeIsolation.cleanupWorktree(
-                repoPath: wtInfo.repoPath,
-                worktreePath: wtInfo.worktreePath,
-                gitRunner: gitRunner
-            )
-        }
-
-        // Clean up context file
-        let contextFile = Self.contextDirectory.appendingPathComponent("\(runId).json")
-        try? FileManager.default.removeItem(at: contextFile)
 
         // Task chaining: trigger onSuccess/onFailure follow-up task.
         // Apply the same guards (isEnabled, overlap, concurrency) as evaluateSchedules.
@@ -408,7 +475,7 @@ final class SchedulerEngine: ObservableObject {
         if let panelId = runs[runIndex].panelId,
            let app = AppDelegate.shared,
            let tabManager = app.tabManager,
-           let wsId = runToWorkspaceId[runId] ?? schedulerWorkspaceId,
+           let wsId = runToWorkspaceId[runId],
            let workspace = tabManager.tabs.first(where: { $0.id == wsId }),
            let panel = workspace.panels[panelId] as? TerminalPanel,
            let surface = panel.surface.surface {
@@ -419,23 +486,7 @@ final class SchedulerEngine: ObservableObject {
         runs[runIndex].status = .cancelled
         runs[runIndex].completedAt = Date()
 
-        if let panelId = runs[runIndex].panelId {
-            panelToRunId.removeValue(forKey: panelId)
-        }
-
-        // Clean up worktree if one was created for this run
-        if let wtInfo = runWorktreeInfo.removeValue(forKey: runId) {
-            WorktreeIsolation.cleanupWorktree(
-                repoPath: wtInfo.repoPath,
-                worktreePath: wtInfo.worktreePath,
-                gitRunner: gitRunner
-            )
-        }
-
-        // Clean up context file
-        let contextFile = Self.contextDirectory.appendingPathComponent("\(runId).json")
-        try? FileManager.default.removeItem(at: contextFile)
-
+        cleanupRunResources(runId: runId, panelId: runs[runIndex].panelId)
         pruneCompletedRuns()
     }
 
@@ -458,7 +509,11 @@ final class SchedulerEngine: ObservableObject {
     /// Create a context file with task metadata for the running command to read.
     func createContextFile(for task: ScheduledTask, run: TaskRun, at url: URL) {
         let dir = url.deletingLastPathComponent()
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
 
         let context: [String: Any] = [
             "task_id": task.id.uuidString,
@@ -483,21 +538,12 @@ final class SchedulerEngine: ObservableObject {
 
     /// Persist state and cancel running tasks on app termination.
     func handleAppWillTerminate() {
-        // Cancel all running tasks and clean up worktrees
+        // Cancel all running tasks and clean up worktrees + context files
         for i in runs.indices {
             if runs[i].status == .running {
                 runs[i].status = .cancelled
                 runs[i].completedAt = Date()
-                if let panelId = runs[i].panelId {
-                    panelToRunId.removeValue(forKey: panelId)
-                }
-                if let wtInfo = runWorktreeInfo.removeValue(forKey: runs[i].id) {
-                    WorktreeIsolation.cleanupWorktree(
-                        repoPath: wtInfo.repoPath,
-                        worktreePath: wtInfo.worktreePath,
-                        gitRunner: gitRunner
-                    )
-                }
+                cleanupRunResources(runId: runs[i].id, panelId: runs[i].panelId)
             }
         }
 

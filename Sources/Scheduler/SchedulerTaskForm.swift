@@ -40,86 +40,11 @@ enum CronPreset: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - TaskTypeMode
-
-enum TaskTypeMode: String, CaseIterable, Identifiable {
-    case claude = "Claude"
-    case general = "General"
-    var id: String { rawValue }
-}
-
-// MARK: - ClaudeModel
-
-enum ClaudeModel: String, CaseIterable, Identifiable {
-    case opus = "opus"
-    case sonnet = "sonnet"
-    case haiku = "haiku"
-    var id: String { rawValue }
-    var displayName: String { rawValue.capitalized }
-}
-
-// MARK: - ClaudePermissionMode
-
-enum ClaudePermissionMode: String, CaseIterable, Identifiable {
-    case plan = "plan"
-    case autoEdit = "acceptEdits"
-    case fullAuto = "bypass"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .plan: return "Plan (safe)"
-        case .autoEdit: return "Auto-approve"
-        case .fullAuto: return "Unrestricted"
-        }
-    }
-
-    var cliFlag: String {
-        switch self {
-        case .plan: return "--permission-mode plan"
-        case .autoEdit: return "--permission-mode acceptEdits"
-        case .fullAuto: return "--dangerously-skip-permissions"
-        }
-    }
-}
-
-// MARK: - ClaudeToolPreset
-
-enum ClaudeToolPreset: String, CaseIterable, Identifiable {
-    case readOnly = "Read-only"
-    case standard = "Standard"
-    case full = "Full"
-    case custom = "Custom"
-
-    var id: String { rawValue }
-
-    var tools: Set<String>? {
-        switch self {
-        case .readOnly: return ["Read", "Glob", "Grep", "WebSearch"]
-        case .standard: return ["Read", "Glob", "Grep", "Edit", "Bash", "Write", "WebSearch"]
-        case .full: return nil
-        case .custom: return nil
-        }
-    }
-}
-
-// MARK: - ClaudeTool
-
-struct ClaudeTool: Identifiable, Hashable {
-    let name: String
-    var id: String { name }
-
-    static let all: [ClaudeTool] = [
-        "Read", "Edit", "Write", "Bash", "Glob", "Grep",
-        "WebSearch", "WebFetch", "Agent", "Notebook",
-    ].map { ClaudeTool(name: $0) }
-}
-
 // MARK: - SchedulerTaskForm
 
 struct SchedulerTaskForm: View {
     let mode: SchedulerFormMode
+    let existingTasks: [ScheduledTask]
     let onSave: (ScheduledTask) -> Void
     let onSaveAndRun: (ScheduledTask) -> Void
     let onCancel: () -> Void
@@ -137,20 +62,16 @@ struct SchedulerTaskForm: View {
     @State private var claudeModel: ClaudeModel = .sonnet
     @State private var claudePrompt: String = ""
     @State private var claudeProject: String = ""
-    @State private var claudePermission: ClaudePermissionMode = .fullAuto
     @State private var claudeMaxTurns: String = ""
     @State private var claudeMaxBudget: String = ""
-    @State private var claudeToolPreset: ClaudeToolPreset = .standard
-    @State private var claudeCustomTools: Set<String> = ["Read", "Glob", "Grep", "WebSearch"]
-    @State private var showPermissionConfirmation: Bool = false
-    @State private var pendingPermissionAction: (() -> Void)?
+    @State private var useSandbox: Bool = false
 
     // Advanced
     @State private var showAdvanced: Bool = false
     @State private var allowOverlap: Bool = false
     @State private var worktreeOption: WorktreeOption = .defaultOption
-    @State private var onSuccessTaskName: String = ""
-    @State private var onFailureTaskName: String = ""
+    @State private var onSuccessTaskId: UUID?
+    @State private var onFailureTaskId: UUID?
     @State private var envRows: [EnvRow] = []
 
     // Validation
@@ -162,11 +83,13 @@ struct SchedulerTaskForm: View {
 
     init(
         mode: SchedulerFormMode,
+        existingTasks: [ScheduledTask] = [],
         onSave: @escaping (ScheduledTask) -> Void,
         onSaveAndRun: @escaping (ScheduledTask) -> Void,
         onCancel: @escaping () -> Void
     ) {
         self.mode = mode
+        self.existingTasks = existingTasks
         self.onSave = onSave
         self.onSaveAndRun = onSaveAndRun
         self.onCancel = onCancel
@@ -177,10 +100,7 @@ struct SchedulerTaskForm: View {
         }
     }
 
-    private var isEditMode: Bool {
-        if case .edit = mode { return true }
-        return false
-    }
+    private var isEditMode: Bool { mode != .create }
 
     var body: some View {
         ScrollView {
@@ -219,9 +139,9 @@ struct SchedulerTaskForm: View {
                         claudeModel: $claudeModel,
                         claudePrompt: $claudePrompt,
                         claudeProject: $claudeProject,
-                        claudePermission: $claudePermission,
                         claudeMaxTurns: $claudeMaxTurns,
-                        claudeMaxBudget: $claudeMaxBudget
+                        claudeMaxBudget: $claudeMaxBudget,
+                        useSandbox: $useSandbox
                     )
                 } else {
                     // Command
@@ -248,41 +168,6 @@ struct SchedulerTaskForm: View {
                 // Advanced section
                 DisclosureGroup("Advanced", isExpanded: $showAdvanced) {
                     VStack(alignment: .leading, spacing: 12) {
-                        if taskType == .claude {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Allowed tools")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                Picker("", selection: $claudeToolPreset) {
-                                    ForEach(ClaudeToolPreset.allCases) { preset in
-                                        Text(preset.rawValue).tag(preset)
-                                    }
-                                }
-                                .labelsHidden()
-
-                                if claudeToolPreset == .custom {
-                                    LazyVGrid(
-                                        columns: [GridItem(.flexible()), GridItem(.flexible())],
-                                        spacing: 4
-                                    ) {
-                                        ForEach(ClaudeTool.all) { tool in
-                                            Toggle(tool.name, isOn: Binding(
-                                                get: { claudeCustomTools.contains(tool.name) },
-                                                set: { enabled in
-                                                    if enabled {
-                                                        claudeCustomTools.insert(tool.name)
-                                                    } else {
-                                                        claudeCustomTools.remove(tool.name)
-                                                    }
-                                                }
-                                            ))
-                                            .toggleStyle(.checkbox)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
                         Toggle("Allow overlap", isOn: $allowOverlap)
 
                         VStack(alignment: .leading, spacing: 4) {
@@ -298,21 +183,17 @@ struct SchedulerTaskForm: View {
                             .pickerStyle(.segmented)
                         }
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("On success task")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            TextField("Task name to chain", text: $onSuccessTaskName)
-                                .textFieldStyle(.roundedBorder)
-                        }
+                        TaskChainPicker(
+                            label: "On success",
+                            selection: $onSuccessTaskId,
+                            tasks: chainableTasks
+                        )
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("On failure task")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            TextField("Task name to chain", text: $onFailureTaskName)
-                                .textFieldStyle(.roundedBorder)
-                        }
+                        TaskChainPicker(
+                            label: "On failure",
+                            selection: $onFailureTaskId,
+                            tasks: chainableTasks
+                        )
 
                         EnvironmentEditor(rows: $envRows)
                     }
@@ -333,6 +214,21 @@ struct SchedulerTaskForm: View {
                     }
                 }
 
+                // Warning for Claude tasks
+                if taskType == .claude {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .font(.caption)
+                        Text("Claude tasks run with unrestricted permissions (--dangerously-skip-permissions) since interactive prompts cannot be answered in headless mode. Enable sandbox mode for filesystem and network isolation.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(8)
+                    .background(Color.orange.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
                 Divider()
 
                 // Footer buttons
@@ -345,13 +241,13 @@ struct SchedulerTaskForm: View {
                     Spacer()
 
                     Button(isEditMode ? "Save & Run" : "Create & Run Now") {
-                        confirmIfNeeded { onSaveAndRun(buildTask()) }
+                        onSaveAndRun(buildTask())
                     }
                     .buttonStyle(.bordered)
                     .disabled(!isFormValid)
 
                     Button(isEditMode ? "Save" : "Create") {
-                        confirmIfNeeded { onSave(buildTask()) }
+                        onSave(buildTask())
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(!isFormValid)
@@ -375,33 +271,16 @@ struct SchedulerTaskForm: View {
                 cronText = expr
             }
         }
-        .alert(
-            "Unrestricted Mode",
-            isPresented: $showPermissionConfirmation
-        ) {
-            Button("Cancel", role: .cancel) {
-                pendingPermissionAction = nil
-            }
-            Button("Continue", role: .destructive) {
-                pendingPermissionAction?()
-                pendingPermissionAction = nil
-            }
-        } message: {
-            Text(
-                "Unrestricted mode disables all permission prompts. "
-                + "Claude will be able to read, write, and execute files without asking. Continue?"
-            )
-        }
+    }
+
+    /// Tasks available for chaining (excludes the task being edited).
+    private var chainableTasks: [ScheduledTask] {
+        existingTasks.filter { $0.id != editingTaskId }
     }
 
     // MARK: - Validation
 
-    private enum Limits {
-        static let maxPromptLength = 32_000
-        static let maxPathLength = 4_096
-        static let maxTurns = 200
-        static let maxBudgetUSD = 100.0
-    }
+    private typealias Limits = ClaudeCommandBuilder
 
     private var isFormValid: Bool {
         let validCron = CronExpression(cronText) != nil
@@ -411,83 +290,33 @@ struct SchedulerTaskForm: View {
                 && claudePrompt.count <= Limits.maxPromptLength
                 && validCron
         } else {
-            return !name.isEmpty && !command.isEmpty && validCron
+            return !name.isEmpty && !command.isEmpty && command.count <= 65_536 && validCron
         }
-    }
-
-    // MARK: - Shell Escaping
-
-    private func shellEscape(_ s: String) -> String {
-        // Replace newlines with spaces — initial_input delivers characters as
-        // keyboard input, so literal newlines act as Enter keypresses and split
-        // the command. Newlines in prompts are just whitespace for Claude.
-        let flat = s.replacingOccurrences(of: "\n", with: " ")
-        return "'" + flat.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     // MARK: - Claude Command Generation
 
-    private static let knownToolNames: Set<String> = Set(ClaudeTool.all.map(\.name))
-
-    /// Build the argument list for a claude -p (print/headless) command.
-    /// Print mode is required for scheduled tasks: it skips the workspace trust
-    /// dialog and runs non-interactively.
-    private var claudeCommandParts: [String] {
-        // Per Claude CLI docs, the prompt is the argument to -p:
-        //   claude -p "prompt here" --allowedTools "Read,Edit,Bash"
-        var parts = ["claude", "-p", shellEscape(claudePrompt)]
-        parts.append(contentsOf: ["--model", claudeModel.rawValue])
-        parts.append(claudePermission.cliFlag)
-
-        if let turns = Int(claudeMaxTurns), turns > 0, turns <= Limits.maxTurns {
-            parts.append(contentsOf: ["--max-turns", "\(turns)"])
-        }
-        if let budget = Double(claudeMaxBudget), budget > 0, budget <= Limits.maxBudgetUSD {
-            parts.append(contentsOf: ["--max-budget-usd", String(format: "%.2f", budget)])
-        }
-
-        // --allowedTools is ignored when combined with --dangerously-skip-permissions
-        // (known CLI behavior). Only emit it for plan and acceptEdits modes.
-        if claudePermission != .fullAuto {
-            let toolsList: String? = {
-                switch claudeToolPreset {
-                case .readOnly, .standard:
-                    return claudeToolPreset.tools?.sorted().joined(separator: ",")
-                case .full:
-                    return nil
-                case .custom:
-                    let safe = claudeCustomTools.filter { Self.knownToolNames.contains($0) }
-                    return safe.isEmpty ? nil : safe.sorted().joined(separator: ",")
-                }
-            }()
-            if let tools = toolsList {
-                parts.append(contentsOf: ["--allowedTools", shellEscape(tools)])
-            }
-        }
-
-        return parts
+    private var claudeConfig: ClaudeCommandBuilder.Config {
+        ClaudeCommandBuilder.Config(
+            model: claudeModel,
+            prompt: claudePrompt,
+            maxTurns: claudeMaxTurns,
+            maxBudget: claudeMaxBudget,
+            useSandbox: useSandbox
+        )
     }
 
     /// Single-line command string for execution via shell.
     private var generatedClaudeCommand: String {
-        claudeCommandParts.joined(separator: " ")
+        ClaudeCommandBuilder.command(from: claudeConfig)
     }
 
     /// Multi-line display string for the preview panel.
     private var generatedClaudeCommandPreview: String {
-        claudeCommandParts.joined(separator: " \\\n  ")
+        ClaudeCommandBuilder.commandPreview(from: claudeConfig)
     }
 
     // MARK: - Permission Confirmation
-
-    private func confirmIfNeeded(_ action: @escaping () -> Void) {
-        if taskType == .claude && claudePermission == .fullAuto {
-            pendingPermissionAction = action
-            showPermissionConfirmation = true
-        } else {
-            action()
-        }
-    }
 
     // MARK: - Helpers
 
@@ -499,8 +328,8 @@ struct SchedulerTaskForm: View {
         workingDirectory = task.workingDirectory ?? ""
         allowOverlap = task.allowOverlap
         worktreeOption = WorktreeOption.from(task.useWorktree)
-        onSuccessTaskName = task.onSuccess ?? ""
-        onFailureTaskName = task.onFailure ?? ""
+        onSuccessTaskId = task.onSuccess.flatMap { UUID(uuidString: $0) }
+        onFailureTaskId = task.onFailure.flatMap { UUID(uuidString: $0) }
 
         if let env = task.environment {
             envRows = env.map { EnvRow(key: $0.key, value: $0.value) }
@@ -516,112 +345,15 @@ struct SchedulerTaskForm: View {
         // Detect Claude mode from existing command
         if task.command.hasPrefix("claude ") {
             taskType = .claude
-            parseClaudeCommand(task.command)
+            let config = ClaudeCommandBuilder.parseCommand(task.command)
+            claudeModel = config.model
+            claudePrompt = config.prompt
+            claudeMaxTurns = config.maxTurns
+            claudeMaxBudget = config.maxBudget
+            useSandbox = task.useSandbox ?? config.useSandbox
             claudeProject = task.workingDirectory ?? ""
         } else {
             taskType = .general
-        }
-    }
-
-    private func parseClaudeCommand(_ cmd: String) {
-        // Extract --model <value>
-        if let range = cmd.range(of: #"--model\s+(\w+)"#, options: .regularExpression) {
-            let modelStr = String(cmd[range]).replacingOccurrences(
-                of: "--model ", with: ""
-            ).trimmingCharacters(in: .whitespaces)
-            if let model = ClaudeModel.allCases.first(where: { $0.rawValue == modelStr }) {
-                claudeModel = model
-            }
-        }
-
-        // Extract permission mode
-        if cmd.contains("--dangerously-skip-permissions") {
-            claudePermission = .fullAuto
-        } else if let range = cmd.range(
-            of: #"--permission-mode\s+([\w-]+)"#, options: .regularExpression
-        ) {
-            let modeStr = String(cmd[range]).replacingOccurrences(
-                of: "--permission-mode ", with: ""
-            ).trimmingCharacters(in: .whitespaces)
-            if let perm = ClaudePermissionMode.allCases.first(where: { $0.rawValue == modeStr }) {
-                claudePermission = perm
-            }
-        }
-
-        // Extract --max-turns <value>
-        if let range = cmd.range(of: #"--max-turns\s+(\d+)"#, options: .regularExpression) {
-            let turnsStr = String(cmd[range]).replacingOccurrences(
-                of: "--max-turns ", with: ""
-            ).trimmingCharacters(in: .whitespaces)
-            claudeMaxTurns = turnsStr
-        }
-
-        // Extract --max-budget-usd <value>
-        if let range = cmd.range(
-            of: #"--max-budget-usd\s+([\d.]+)"#, options: .regularExpression
-        ) {
-            let budgetStr = String(cmd[range]).replacingOccurrences(
-                of: "--max-budget-usd ", with: ""
-            ).trimmingCharacters(in: .whitespaces)
-            claudeMaxBudget = budgetStr
-        }
-
-        // Extract --allowedTools '<csv>'
-        if let range = cmd.range(
-            of: #"--allowedTools\s+'([^']+)'"#, options: .regularExpression
-        ) {
-            let toolsMatch = String(cmd[range])
-            // Extract content between single quotes
-            if let qStart = toolsMatch.firstIndex(of: "'"),
-               let qEnd = toolsMatch[toolsMatch.index(after: qStart)...].firstIndex(of: "'")
-            {
-                let csv = String(toolsMatch[toolsMatch.index(after: qStart)..<qEnd])
-                let tools = Set(csv.split(separator: ",").map { String($0) })
-                let validTools = tools.filter { Self.knownToolNames.contains($0) }
-
-                // Match against presets
-                if validTools == ClaudeToolPreset.readOnly.tools {
-                    claudeToolPreset = .readOnly
-                } else if validTools == ClaudeToolPreset.standard.tools {
-                    claudeToolPreset = .standard
-                } else {
-                    claudeToolPreset = .custom
-                    claudeCustomTools = validTools
-                }
-            }
-        } else if !cmd.contains("--allowedTools") {
-            claudeToolPreset = .full
-        }
-
-        // Extract the prompt — last single-quoted string
-        // Walk backwards to find the last top-level single-quoted segment
-        let stripped = cmd.replacingOccurrences(of: " \\\n  ", with: " ")
-        if let lastQuote = stripped.lastIndex(of: "'") {
-            let before = stripped[..<lastQuote]
-            // Find the matching opening quote (not preceded by \)
-            var depth = 0
-            var openIndex: String.Index?
-            var i = before.startIndex
-            while i < before.endIndex {
-                if before[i] == "'" {
-                    if depth == 0 {
-                        // Check this isn't inside the --allowedTools arg
-                        let prefix = String(before[..<i])
-                        if !prefix.hasSuffix("--allowedTools ") {
-                            openIndex = i
-                        }
-                    }
-                    depth = depth == 0 ? 1 : 0
-                }
-                i = before.index(after: i)
-            }
-            if let open = openIndex {
-                let quoted = String(stripped[stripped.index(after: open)...lastQuote])
-                // Remove trailing quote
-                let prompt = String(quoted.dropLast())
-                    .replacingOccurrences(of: "'\\''", with: "'")
-                claudePrompt = prompt
-            }
         }
     }
 
@@ -642,11 +374,19 @@ struct SchedulerTaskForm: View {
         nextFireDates = dates
     }
 
+    private static func resolveDirectory(_ raw: String, requireAbsolute: Bool = false) -> String? {
+        guard !raw.isEmpty else { return nil }
+        let path = raw.hasPrefix("~") ? NSString(string: raw).expandingTildeInPath : raw
+        if requireAbsolute && !path.hasPrefix("/") { return nil }
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
     private func buildTask() -> ScheduledTask {
         let env: [String: String]? = envRows.isEmpty ? nil : Dictionary(
-            uniqueKeysWithValues: envRows
-                .filter { !$0.key.isEmpty }
-                .map { ($0.key, $0.value) }
+            envRows
+                .filter { !$0.key.isEmpty && ClaudeCommandBuilder.isValidEnvKeyName($0.key) && !ClaudeCommandBuilder.isBlockedEnvKey($0.key) }
+                .map { ($0.key, $0.value) },
+            uniquingKeysWith: { _, last in last }
         )
 
         let finalCommand: String
@@ -654,18 +394,10 @@ struct SchedulerTaskForm: View {
 
         if taskType == .claude {
             finalCommand = generatedClaudeCommand
-            if !claudeProject.isEmpty {
-                let path = claudeProject.hasPrefix("~")
-                    ? NSString(string: claudeProject).expandingTildeInPath
-                    : claudeProject
-                // Only accept absolute paths
-                finalWorkingDir = path.hasPrefix("/") ? path : nil
-            } else {
-                finalWorkingDir = nil
-            }
+            finalWorkingDir = Self.resolveDirectory(claudeProject, requireAbsolute: true)
         } else {
             finalCommand = command
-            finalWorkingDir = workingDirectory.isEmpty ? nil : workingDirectory
+            finalWorkingDir = Self.resolveDirectory(workingDirectory)
         }
 
         return ScheduledTask(
@@ -678,8 +410,9 @@ struct SchedulerTaskForm: View {
             isEnabled: true,
             allowOverlap: allowOverlap,
             useWorktree: worktreeOption.toBool,
-            onSuccess: onSuccessTaskName.isEmpty ? nil : onSuccessTaskName,
-            onFailure: onFailureTaskName.isEmpty ? nil : onFailureTaskName,
+            useSandbox: (taskType == .claude && useSandbox) ? true : nil,
+            onSuccess: onSuccessTaskId?.uuidString,
+            onFailure: onFailureTaskId?.uuidString,
             createdAt: editingCreatedAt ?? Date()
         )
     }
@@ -816,9 +549,9 @@ private struct ClaudeFieldsSection: View {
     @Binding var claudeModel: ClaudeModel
     @Binding var claudePrompt: String
     @Binding var claudeProject: String
-    @Binding var claudePermission: ClaudePermissionMode
     @Binding var claudeMaxTurns: String
     @Binding var claudeMaxBudget: String
+    @Binding var useSandbox: Bool
 
     var body: some View {
         // Model
@@ -843,20 +576,6 @@ private struct ClaudeFieldsSection: View {
             TextField("~/code/myproject", text: $claudeProject)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
-        }
-
-        // Permission mode
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Permission Mode")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Picker("", selection: $claudePermission) {
-                ForEach(ClaudePermissionMode.allCases) { perm in
-                    Text(perm.displayName).tag(perm)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
         }
 
         // Prompt
@@ -899,6 +618,37 @@ private struct ClaudeFieldsSection: View {
                         .font(.system(.body, design: .monospaced))
                 }
             }
+        }
+
+        // Sandbox mode
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Sandbox Mode", isOn: $useSandbox)
+            Text("Restricts file writes and network access to the working directory")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - TaskChainPicker
+
+private struct TaskChainPicker: View {
+    let label: String
+    @Binding var selection: UUID?
+    let tasks: [ScheduledTask]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Picker("", selection: $selection) {
+                Text("None").tag(UUID?.none)
+                ForEach(tasks) { task in
+                    Text(task.name).tag(UUID?.some(task.id))
+                }
+            }
+            .labelsHidden()
         }
     }
 }

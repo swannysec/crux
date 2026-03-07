@@ -1,9 +1,9 @@
 import XCTest
 
-#if canImport(cmux_DEV)
-@testable import cmux_DEV
-#elseif canImport(cmux)
-@testable import cmux
+#if canImport(crux_DEV)
+@testable import crux_DEV
+#elseif canImport(crux)
+@testable import crux
 #endif
 
 final class SchedulerSidebarTests: XCTestCase {
@@ -316,22 +316,6 @@ final class SchedulerSidebarTests: XCTestCase {
 
     // MARK: - Claude Mode Types
 
-    func testClaudeToolPresetReadOnlyContainsExpectedTools() {
-        let tools = ClaudeToolPreset.readOnly.tools
-        XCTAssertNotNil(tools)
-        XCTAssertEqual(tools, ["Read", "Glob", "Grep", "WebSearch"])
-    }
-
-    func testClaudeToolPresetStandardContainsExpectedTools() {
-        let tools = ClaudeToolPreset.standard.tools
-        XCTAssertNotNil(tools)
-        XCTAssertEqual(tools, ["Read", "Glob", "Grep", "Edit", "Bash", "Write", "WebSearch"])
-    }
-
-    func testClaudeToolPresetFullReturnsNil() {
-        XCTAssertNil(ClaudeToolPreset.full.tools, "Full preset should return nil (all tools)")
-    }
-
     func testClaudeModelEnumHasThreeModels() {
         XCTAssertEqual(ClaudeModel.allCases.count, 3)
         XCTAssertTrue(ClaudeModel.allCases.contains(.opus))
@@ -339,31 +323,135 @@ final class SchedulerSidebarTests: XCTestCase {
         XCTAssertTrue(ClaudeModel.allCases.contains(.haiku))
     }
 
-    func testClaudePermissionModeCLIFlags() {
-        XCTAssertEqual(
-            ClaudePermissionMode.plan.cliFlag,
-            "--permission-mode plan"
-        )
-        XCTAssertEqual(
-            ClaudePermissionMode.autoEdit.cliFlag,
-            "--permission-mode acceptEdits"
-        )
-        XCTAssertEqual(
-            ClaudePermissionMode.fullAuto.cliFlag,
-            "--dangerously-skip-permissions"
-        )
-    }
-
     func testTaskTypeModeDefaultIsClaude() {
         XCTAssertEqual(TaskTypeMode.allCases.first, .claude)
     }
 
-    func testClaudeToolAllContainsTenTools() {
-        XCTAssertEqual(ClaudeTool.all.count, 10)
-        let names = Set(ClaudeTool.all.map(\.name))
-        XCTAssertTrue(names.contains("Read"))
-        XCTAssertTrue(names.contains("Bash"))
-        XCTAssertTrue(names.contains("Agent"))
+    // MARK: - ClaudeCommandBuilder
+
+    func testShellEscapeHandlesSimpleString() {
+        XCTAssertEqual(ClaudeCommandBuilder.shellEscape("hello"), "'hello'")
+    }
+
+    func testShellEscapeHandlesSingleQuotes() {
+        XCTAssertEqual(ClaudeCommandBuilder.shellEscape("it's"), "'it'\\''s'")
+    }
+
+    func testShellEscapeReplacesNewlinesWithSpaces() {
+        XCTAssertEqual(ClaudeCommandBuilder.shellEscape("line1\nline2"), "'line1 line2'")
+    }
+
+    func testShellEscapeHandlesEmptyString() {
+        XCTAssertEqual(ClaudeCommandBuilder.shellEscape(""), "''")
+    }
+
+    func testCommandGenerationDefaultConfig() {
+        let config = ClaudeCommandBuilder.Config(
+            model: .sonnet,
+            prompt: "say hello"
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertTrue(cmd.hasPrefix("claude -p 'say hello'"))
+        XCTAssertTrue(cmd.contains("--model sonnet"))
+        XCTAssertTrue(cmd.contains("--dangerously-skip-permissions"))
+        XCTAssertFalse(cmd.contains("--settings"))
+    }
+
+    func testCommandGenerationWithSandboxEnabled() {
+        let config = ClaudeCommandBuilder.Config(
+            model: .haiku,
+            prompt: "test",
+            useSandbox: true
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertTrue(cmd.contains("--dangerously-skip-permissions"))
+        XCTAssertTrue(cmd.contains("--settings"))
+        XCTAssertTrue(cmd.contains("\"sandbox\""))
+        XCTAssertTrue(cmd.contains("\"enabled\":true"))
+    }
+
+    func testCommandGenerationWithoutSandbox() {
+        let config = ClaudeCommandBuilder.Config(
+            model: .sonnet,
+            prompt: "test",
+            useSandbox: false
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertFalse(cmd.contains("--settings"))
+    }
+
+    func testCommandGenerationWithCostControls() {
+        let config = ClaudeCommandBuilder.Config(
+            prompt: "test",
+            maxTurns: "10",
+            maxBudget: "5.00"
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertTrue(cmd.contains("--max-turns 10"))
+        XCTAssertTrue(cmd.contains("--max-budget-usd 5.00"))
+    }
+
+    func testCommandGenerationIgnoresInvalidCostControls() {
+        let config = ClaudeCommandBuilder.Config(
+            prompt: "test",
+            maxTurns: "abc",
+            maxBudget: "-1"
+        )
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        XCTAssertFalse(cmd.contains("--max-turns"))
+        XCTAssertFalse(cmd.contains("--max-budget"))
+    }
+
+    func testParseCommandRoundTripsModel() {
+        let config = ClaudeCommandBuilder.Config(model: .opus, prompt: "test prompt")
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.model, .opus)
+    }
+
+    func testParseCommandRoundTripsPrompt() {
+        let config = ClaudeCommandBuilder.Config(prompt: "hello world")
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.prompt, "hello world")
+    }
+
+    func testParseCommandHandlesPromptWithSingleQuotes() {
+        let config = ClaudeCommandBuilder.Config(prompt: "it's a test")
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.prompt, "it's a test")
+    }
+
+    func testParseCommandRoundTripsSandbox() {
+        let config = ClaudeCommandBuilder.Config(prompt: "test", useSandbox: true)
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertTrue(parsed.useSandbox)
+    }
+
+    func testParseCommandDefaultsToNoSandbox() {
+        let parsed = ClaudeCommandBuilder.parseCommand(
+            "claude -p 'test' --model sonnet --dangerously-skip-permissions"
+        )
+        XCTAssertFalse(parsed.useSandbox)
+    }
+
+    func testParseCommandRoundTripsCostControls() {
+        let config = ClaudeCommandBuilder.Config(prompt: "test", maxTurns: "5", maxBudget: "2.50")
+        let cmd = ClaudeCommandBuilder.command(from: config)
+        let parsed = ClaudeCommandBuilder.parseCommand(cmd)
+        XCTAssertEqual(parsed.maxTurns, "5")
+        XCTAssertEqual(parsed.maxBudget, "2.50")
+    }
+
+    func testParseCommandHandlesLegacyPermissionFlags() {
+        // Old commands with --permission-mode should still parse (prompt is extracted)
+        let parsed = ClaudeCommandBuilder.parseCommand(
+            "claude -p 'test' --model sonnet --permission-mode plan"
+        )
+        XCTAssertEqual(parsed.prompt, "test")
+        XCTAssertEqual(parsed.model, .sonnet)
     }
 
     // MARK: - Task CRUD via Engine (continued)
