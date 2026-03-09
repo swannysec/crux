@@ -22,7 +22,7 @@ enum SchedulerPersistenceStore {
             try FileManager.default.createDirectory(
                 at: directory,
                 withIntermediateDirectories: true,
-                attributes: nil
+                attributes: [.posixPermissions: 0o700]
             )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys]
@@ -47,7 +47,7 @@ enum SchedulerPersistenceStore {
             in: .userDomainMask
         ).first else { return nil }
 
-        let bundleId = Bundle.main.bundleIdentifier ?? "com.cmuxterm.app"
+        let bundleId = Bundle.main.bundleIdentifier ?? "com.swannysec.crux"
         return appSupport
             .appendingPathComponent("cmux", isDirectory: true)
             .appendingPathComponent("scheduler-\(bundleId).json", isDirectory: false)

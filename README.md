@@ -23,18 +23,36 @@ A cron-based task runner that executes commands in Ghostty terminal surfaces. Ta
 - **Titlebar toggle** -- Show/hide the scheduler from the titlebar
 - **Notifications** -- Task completions trigger blue rings and badges
 - **Task chaining** -- Chain tasks with `--on-success` and `--on-failure` hooks (max depth 3)
+- **Claude mode** -- Schedule Claude Code tasks with model selection, sandbox, and cost controls
 - **Git worktree isolation** -- Run tasks in isolated git worktrees (opt-in)
 - **Session memory** -- Each task gets a context file via `CMUX_TASK_CONTEXT_FILE`
 - **CLI** -- `cmux scheduler` subcommands for all operations
 - **Socket API** -- 10 `scheduler.*` v2 commands
+
+### Claude Mode
+
+The scheduler includes a Claude mode for scheduling [Claude Code](https://code.claude.com) tasks.
+
+- **Headless execution** -- Tasks run via `claude -p` in a dedicated terminal surface
+- **Model selection** -- Choose between Opus, Sonnet, and Haiku
+- **Sandbox mode** -- Optional OS-level filesystem and network isolation via [Claude Code sandboxing](https://code.claude.com/docs/en/sandboxing)
+- **Cost controls** -- Set max turns and budget limits per task
+- **Command preview** -- See the generated `claude -p` command before saving
+
+Claude tasks always run with `--dangerously-skip-permissions` since interactive
+permission prompts cannot be answered in scheduled/headless mode. Enable sandbox
+mode to restrict what bash commands can access at the filesystem and network level.
+
+For advanced sandbox configuration (custom allowed domains, filesystem paths, etc.),
+see the [Claude Code sandbox settings reference](https://code.claude.com/docs/en/settings#sandbox-settings).
 
 ### Browser kill-switch
 
 Disable the WKWebView browser via UserDefaults. All browser paths return errors when disabled.
 
 ```bash
-defaults write com.cmuxterm.app browserEnabled -bool false
-defaults write com.cmuxterm.app browserEnabled -bool true
+defaults write com.swannysec.crux browserEnabled -bool false
+defaults write com.swannysec.crux browserEnabled -bool true
 ```
 
 ## Scheduler

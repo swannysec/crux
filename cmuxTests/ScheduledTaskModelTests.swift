@@ -1,9 +1,9 @@
 import XCTest
 
-#if canImport(cmux_DEV)
-@testable import cmux_DEV
-#elseif canImport(cmux)
-@testable import cmux
+#if canImport(crux_DEV)
+@testable import crux_DEV
+#elseif canImport(crux)
+@testable import crux
 #endif
 
 final class ScheduledTaskModelTests: XCTestCase {
@@ -20,6 +20,7 @@ final class ScheduledTaskModelTests: XCTestCase {
             isEnabled: true,
             allowOverlap: false,
             useWorktree: true,
+            useSandbox: true,
             onSuccess: "echo done",
             onFailure: "echo failed",
             createdAt: Date(timeIntervalSince1970: 1700000000)
@@ -42,6 +43,7 @@ final class ScheduledTaskModelTests: XCTestCase {
         XCTAssertEqual(task.isEnabled, decoded.isEnabled)
         XCTAssertEqual(task.allowOverlap, decoded.allowOverlap)
         XCTAssertEqual(task.useWorktree, decoded.useWorktree)
+        XCTAssertEqual(task.useSandbox, decoded.useSandbox)
         XCTAssertEqual(task.onSuccess, decoded.onSuccess)
         XCTAssertEqual(task.onFailure, decoded.onFailure)
         XCTAssertEqual(task.createdAt, decoded.createdAt)
@@ -69,6 +71,7 @@ final class ScheduledTaskModelTests: XCTestCase {
         XCTAssertNil(decoded.workingDirectory)
         XCTAssertNil(decoded.environment)
         XCTAssertNil(decoded.useWorktree)
+        XCTAssertNil(decoded.useSandbox)
         XCTAssertNil(decoded.onSuccess)
         XCTAssertNil(decoded.onFailure)
         XCTAssertEqual(task, decoded)
@@ -84,10 +87,44 @@ final class ScheduledTaskModelTests: XCTestCase {
         XCTAssertTrue(task.isEnabled)
         XCTAssertFalse(task.allowOverlap)
         XCTAssertNil(task.useWorktree)
+        XCTAssertNil(task.useSandbox)
         XCTAssertNil(task.workingDirectory)
         XCTAssertNil(task.environment)
         XCTAssertNil(task.onSuccess)
         XCTAssertNil(task.onFailure)
+    }
+
+    func testScheduledTaskUseSandboxCodableRoundTrip() throws {
+        let task = ScheduledTask(
+            name: "sandboxed",
+            cronExpression: "0 * * * *",
+            command: "claude -p 'test' --model sonnet --dangerously-skip-permissions --settings '{\"sandbox\":{\"enabled\":true}}'",
+            useSandbox: true,
+            createdAt: Date(timeIntervalSince1970: 1700000000)
+        )
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(task)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(ScheduledTask.self, from: data)
+
+        XCTAssertEqual(decoded.useSandbox, true)
+        XCTAssertEqual(task, decoded)
+    }
+
+    func testScheduledTaskUseSandboxNilWhenAbsent() throws {
+        // Simulate old JSON without useSandbox key
+        let json = """
+        {"id":"A1B2C3D4-E5F6-7890-ABCD-EF1234567890","name":"old","cronExpression":"0 * * * *","command":"echo","isEnabled":true,"allowOverlap":false,"createdAt":"2023-11-14T22:13:20Z"}
+        """
+        let data = json.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(ScheduledTask.self, from: data)
+        XCTAssertNil(decoded.useSandbox)
     }
 
     // MARK: - TaskRun Codable

@@ -51,14 +51,14 @@ SUSPICIOUS_PATTERNS = [
 def get_cmux_pid() -> Optional[int]:
     """Get the PID of the running cmux process."""
     result = subprocess.run(
-        ["pgrep", "-f", r"cmux\.app/Contents/MacOS/cmux$"],
+        ["pgrep", "-f", r"crux\.app/Contents/MacOS/crux$"],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
         # Try DEV build
         result = subprocess.run(
-            ["pgrep", "-f", r"cmux DEV\.app/Contents/MacOS/cmux"],
+            ["pgrep", "-f", r"crux DEV\.app/Contents/MacOS/crux DEV"],
             capture_output=True,
             text=True,
         )

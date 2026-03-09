@@ -1,9 +1,9 @@
 import XCTest
 
-#if canImport(cmux_DEV)
-@testable import cmux_DEV
-#elseif canImport(cmux)
-@testable import cmux
+#if canImport(crux_DEV)
+@testable import crux_DEV
+#elseif canImport(crux)
+@testable import crux
 #endif
 
 final class SessionPersistenceTests: XCTestCase {
@@ -94,7 +94,7 @@ final class SessionPersistenceTests: XCTestCase {
 
     func testRestorePolicySkipsWhenLaunchHasExplicitArguments() {
         let shouldRestore = SessionRestorePolicy.shouldAttemptRestore(
-            arguments: ["/Applications/cmux.app/Contents/MacOS/cmux", "--window", "window:1"],
+            arguments: ["/Applications/crux.app/Contents/MacOS/crux", "--window", "window:1"],
             environment: [:]
         )
 
@@ -103,7 +103,7 @@ final class SessionPersistenceTests: XCTestCase {
 
     func testRestorePolicyAllowsFinderStyleLaunchArgumentsOnly() {
         let shouldRestore = SessionRestorePolicy.shouldAttemptRestore(
-            arguments: ["/Applications/cmux.app/Contents/MacOS/cmux", "-psn_0_12345"],
+            arguments: ["/Applications/crux.app/Contents/MacOS/crux", "-psn_0_12345"],
             environment: [:]
         )
 
@@ -112,7 +112,7 @@ final class SessionPersistenceTests: XCTestCase {
 
     func testRestorePolicySkipsWhenRunningUnderXCTest() {
         let shouldRestore = SessionRestorePolicy.shouldAttemptRestore(
-            arguments: ["/Applications/cmux.app/Contents/MacOS/cmux"],
+            arguments: ["/Applications/crux.app/Contents/MacOS/crux"],
             environment: ["XCTestConfigurationFilePath": "/tmp/xctest.xctestconfiguration"]
         )
 
